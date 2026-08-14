@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
                 id: string;
                 name: string;
                 vendor: string;
+                supportsVision: boolean;
                 supportsReasoning: boolean;
                 isReasoningDefault: boolean;
             }>();
@@ -39,6 +40,7 @@ export async function GET(request: NextRequest) {
                     id: modelId,
                     name: model.name,
                     vendor: model.vendor,
+                    supportsVision: model.supportsVision ?? false,
                     supportsReasoning: model.supportsReasoning,
                     isReasoningDefault: model.isReasoningDefault ?? false,
                 });
@@ -65,6 +67,7 @@ export async function GET(request: NextRequest) {
                 id: m.id,
                 name: m.name,
                 vendor: m.vendor,
+                supportsVision: m.supportsVision ?? false, // 👈 补全视觉支持字段
                 supportsReasoning: m.supportsReasoning,
                 isReasoningDefault: m.isReasoningDefault,
                 allowed: access.allowed,
