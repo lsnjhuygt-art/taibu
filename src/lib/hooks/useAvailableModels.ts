@@ -13,6 +13,8 @@ type AvailableModel = {
   id: string;
   name: string;
   vendor: AIVendor;
+  supportsVision?: boolean; // 👈 补全类型定义
+  supports_vision?: boolean;
   supportsReasoning: boolean;
   isReasoningDefault?: boolean;
   allowed?: boolean;
@@ -49,7 +51,22 @@ export function useAvailableModels(userId?: string | null, options?: { vision?: 
     staleTime: 10 * 60_000,
     select: (models) => (
       vision
-        ? models.filter((model) => model.vendor === 'qwen-vl' || model.vendor === 'gemini-vl')
+        ? models.filter((model) => {
+            // ✅ 优先检查接口下发的视觉支持标记
+            if (model.supportsVision || model.supports_vision) return true;
+
+            // ✅ 兜底兼容：匹配 google 供应商或 vendor 名称中带有 vl/vision 的模型
+            const vendorStr = String(model.vendor || '').toLowerCase();
+            const idStr = String(model.id || '').toLowerCase();
+            return (
+              vendorStr === 'google' ||
+              vendorStr === 'gemini-vl' ||
+              vendorStr === 'qwen-vl' ||
+              idStr.includes('gemini') ||
+              idStr.includes('vision') ||
+              idStr.includes('vl')
+            );
+          })
         : models
     ),
   });
