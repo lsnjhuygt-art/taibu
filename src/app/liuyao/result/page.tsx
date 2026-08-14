@@ -87,13 +87,16 @@ export default function ResultPage() {
         resolveResultYongShenState(result?.yongShenTargets, pendingYongShenTargets)
     ), [pendingYongShenTargets, result?.yongShenTargets]);
     
-    // 确保分析目标安全兜底
-    const appliedYongShenTargets = yongShenTargetState.appliedTargets || [];
+    // 严格过滤合法的六亲目标（父母、官鬼、兄弟、妻财、子孙）
+    const appliedYongShenTargets = useMemo(() => (
+        normalizeYongShenTargets(yongShenTargetState.appliedTargets || [])
+    ), [yongShenTargetState.appliedTargets]);
+
     const requiresYongShenTargets = Boolean(result?.question?.trim());
     const missingYongShenTargets = requiresYongShenTargets && appliedYongShenTargets.length === 0;
     
-    // 只要有卦象数据即可进行 AI 解读与排盘，不再被选填项卡死
-    const canAnalyze = Boolean(result?.yaos && result.yaos.length === 6);
+    // 校验是否具备分析条件（有卦象，且若有具体问题则需指定分析目标）
+    const canAnalyze = Boolean(result?.yaos && result.yaos.length === 6 && !missingYongShenTargets);
 
     const liuyaoBundle = useMemo(() => {
         if (!result || !result.yaos || result.yaos.length !== 6) return null;
@@ -101,8 +104,8 @@ export default function ResultPage() {
             return calculateLiuyaoBundle({
                 yaos: result.yaos,
                 question: result.question || '综合运势',
-                date: result.createdAt,
-                yongShenTargets: appliedYongShenTargets.length > 0 ? appliedYongShenTargets : ['世爻' as LiuQin],
+                date: result.createdAt ? new Date(result.createdAt) : new Date(),
+                yongShenTargets: appliedYongShenTargets,
                 hexagram: result.hexagram,
                 changedHexagram: result.changedHexagram,
             });
@@ -134,10 +137,8 @@ export default function ResultPage() {
         let text = '';
         if (liuyaoBundle?.output) {
             text = generateLiuyaoChartText(liuyaoBundle.output, { detailLevel: level });
-        } else if (result?.hexagram) {
-            text = `【本卦】${result.hexagram.name} ${result.changedHexagram ? `-> 【变卦】${result.changedHexagram.name}` : ''}\n问事：${result.question || '综合运势'}`;
         }
-
+        
         if (text) {
             await navigator.clipboard.writeText(text);
             setCopied(true);
@@ -154,8 +155,9 @@ export default function ResultPage() {
                 ? questionPayload.yongShenTargets
                 : [];
             const normalizedTargets = resolveResultYongShenTargets(parsed.yongShenTargets, [], questionSessionTargets || []);
-            setResult({ ...parsed, createdAt: new Date(parsed.createdAt || Date.now()), yongShenTargets: normalizedTargets });
-            setPendingYongShenTargets(normalizedTargets);
+            const strictlyValidTargets = normalizeYongShenTargets(normalizedTargets);
+            setResult({ ...parsed, createdAt: new Date(parsed.createdAt || Date.now()), yongShenTargets: strictlyValidTargets });
+            setPendingYongShenTargets(strictlyValidTargets);
             setDivinationId(parsed.divinationId || null);
             setConversationId(parsed.conversationId || null);
         } else {
@@ -192,7 +194,13 @@ export default function ResultPage() {
     });
 
     const handleGetInterpretation = async () => {
-        if (!result || !user || !canAnalyze) return;
+        if (!result || !user) return;
+        if (missingYongShenTargets) {
+            setError('请先在上方选择分析目标（如事业看官鬼，财运看妻财）');
+            return;
+        }
+        if (!canAnalyze) return;
+
         setIsLoading(true);
         streaming.reset();
         setError(null);
@@ -200,10 +208,9 @@ export default function ResultPage() {
         setInterpretation(null);
 
         try {
-            const safeTargets = appliedYongShenTargets.length > 0 ? appliedYongShenTargets : ['世爻' as LiuQin];
             const baseBody = {
                 question: result.question || '综合运势',
-                yongShenTargets: safeTargets,
+                yongShenTargets: appliedYongShenTargets,
                 hexagram: result.hexagram,
                 changedHexagram: result.changedHexagram,
                 changedLines: result.changedLines || [],
@@ -305,7 +312,7 @@ export default function ResultPage() {
                             <div className="border border-blue-100 rounded-md p-5 space-y-4 bg-blue-50/30">
                                 <div className="space-y-1">
                                     <h3 className="text-sm font-semibold text-[#2eaadc]">选择分析目标</h3>
-                                    <p className="text-xs text-foreground/50">先明确本次解卦重点，再进入后续分析。</p>
+                                    <p className="text-xs text-foreground/50">请先选择本次解卦重点（如测财运选妻财，测工作选官鬼），以便 AI 精准断卦。</p>
                                 </div>
                                 <YongShenTargetPicker value={pendingYongShenTargets} onChange={setPendingYongShenTargets} variant="block" />
                                 <div className="flex justify-end">
