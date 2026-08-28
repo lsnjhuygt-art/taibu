@@ -44,15 +44,12 @@ export function createModelFromConfig(
     }
 
     const baseURL = normalizeBaseUrl(config.apiUrl);
-    const isGoogle = baseURL.includes('googleapis.com');
 
     const provider = createOpenAI({
         apiKey,
         baseURL,
-        // 当为 Google 端点时使用 strict 模式，防止 @ai-sdk/openai 自动重复追加 /v1
-        compatibility: isGoogle ? 'strict' : undefined,
         // 自定义 fetch：部分网关上游的 Cloudflare WAF 会拦截 Node.js 默认指纹，
-        // 使用浏览器风格请求头绕过 bot 检测
+        // 使用浏览器风格请求头绕过 bot 检测，并修正特殊网关 URL
         fetch: gatewayFetch,
     });
 
@@ -318,7 +315,14 @@ async function fetchWithGatewayHeaders(
 }
 
 function gatewayFetch(url: string | URL | Request, init?: RequestInit): Promise<Response> {
-    return fetchWithGatewayHeaders(url, init);
+    // 自动纠偏 Google API 兼容路径中误拼的 /v1
+    let finalUrl = url;
+    if (typeof finalUrl === 'string') {
+        finalUrl = finalUrl.replace('/v1beta/openai/v1/', '/v1beta/openai/');
+    } else if (finalUrl instanceof URL) {
+        finalUrl.pathname = finalUrl.pathname.replace('/v1beta/openai/v1/', '/v1beta/openai/');
+    }
+    return fetchWithGatewayHeaders(finalUrl, init);
 }
 
 /**
