@@ -13,7 +13,8 @@ export interface CustomProviderInputErrors {
  *
  * - 自动去掉尾部斜杠
  * - 如果用户传入完整 `/chat/completions`，回退到 baseURL
- * - 如果缺少 `/v1` 版本段，则自动补齐
+ * - 兼容 Google 端点 (/v1beta/openai)，避免被错误追加 /v1
+ * - 如果缺少版本号段，则自动补齐 /v1
  */
 export function normalizeCustomProviderBaseUrl(apiUrl: string): string {
     const parsed = new URL(apiUrl.trim());
@@ -28,7 +29,10 @@ export function normalizeCustomProviderBaseUrl(apiUrl: string): string {
         pathname = pathname.replace(/\/chat\/completions$/u, '');
     }
 
-    if (!/\/v\d+$/u.test(pathname)) {
+    const isGoogleOpenAi = pathname.endsWith('/openai') || parsed.hostname.includes('googleapis.com');
+    const hasVersionSuffix = /\/v\d+([a-zA-Z0-9_-]+)?$/u.test(pathname);
+
+    if (!isGoogleOpenAi && !hasVersionSuffix) {
         pathname = `${pathname || ''}/v1`;
     }
 
