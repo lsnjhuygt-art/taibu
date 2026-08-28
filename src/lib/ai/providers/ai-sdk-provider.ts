@@ -30,9 +30,6 @@ export function getApiKey(envVar: string): string | undefined {
 
 /**
  * 根据 AIModelConfig 动态创建 AI SDK provider 实例和模型
- *
- * 当 reasoning 为 true 且 config.reasoningModelId 存在时，
- * 使用 reasoningModelId 替代 modelId，确保推理请求命中正确的后端模型。
  */
 export function createModelFromConfig(
     config: AIModelConfig,
@@ -48,27 +45,22 @@ export function createModelFromConfig(
     const provider = createOpenAI({
         apiKey,
         baseURL,
-        // 自定义 fetch：部分网关上游的 Cloudflare WAF 会拦截 Node.js 默认指纹，
-        // 使用浏览器风格请求头绕过 bot 检测，并修正特殊网关 URL
         fetch: gatewayFetch,
     });
 
-    // 推理模式下使用 reasoningModelId（如 deepseek-pro 的独立推理模型）
     let modelId = (options?.reasoning && config.reasoningModelId)
         ? config.reasoningModelId
         : config.modelId;
 
-    // 针对 Google Gemini 模型 ID 进行自动纠偏容错
     if (modelId === 'gemini-3.1-pro') {
         modelId = 'gemini-3.1-pro-preview';
     }
 
-    // For OpenAI-compatible gateways (NewAPI/Octopus), use chat-completions mode.
     return provider.chat(modelId);
 }
 
 /**
- * 检查模型配置是否可用（API Key是否配置）
+ * 检查模型配置是否可用
  */
 export function isModelAvailable(config: AIModelConfig): boolean {
     const key = getApiKey(config.apiKeyEnvVar);
@@ -82,9 +74,7 @@ export function toCoreMessages(
     messages: AIRequestMessage[],
     options?: { imageBase64?: string; imageMimeType?: string },
 ): CoreMessage[] {
-    // system role 通过 streamText/generateText 的 system 参数传递，不放入 messages 数组
     return messages.filter(msg => msg.role !== 'system').map((msg, index, filtered) => {
-        // Vision: 在最后一条用户消息中添加图片
         if (
             msg.role === 'user' &&
             options?.imageBase64 &&
@@ -112,17 +102,8 @@ export function toCoreMessages(
     });
 }
 
-/**
- * 需要 enable_thinking 参数激活推理模式的供应商集合
- */
 const ENABLE_THINKING_VENDORS = new Set(['glm', 'deepseek', 'moonshot', 'qwen', 'qwen-vl']);
 
-/**
- * 构建 vendor-specific 的推理模式参数
- *
- * reasoningEffortFormat 优先（标准 API 字段），
- * 否则走 vendor 特定的 enable_thinking 开关。
- */
 function buildThinkingParams(
     vendor: string,
     reasoning?: boolean,
@@ -134,16 +115,12 @@ function buildThinkingParams(
     return {};
 }
 
-/**
- * 构建 AI SDK 调用的 provider-specific 选项
- */
 function buildProviderOptions(
     config: AIModelConfig,
     options?: AIProviderOptions,
 ): ProviderOptions | undefined {
     const providerOptions: Record<string, JSONValue> = {};
 
-    // 推理模式：reasoningEffortFormat 优先（标准 API 字段），否则走 vendor 特定开关
     if (options?.reasoning) {
         const effort = options.reasoningEffort ?? config.defaultReasoningEffort;
         if (config.reasoningEffortFormat === 'reasoning_effort' && effort) {
@@ -151,12 +128,10 @@ function buildProviderOptions(
         } else if (config.reasoningEffortFormat === 'reasoning_object' && effort) {
             providerOptions.reasoning = { effort };
         } else {
-            // GLM/DeepSeek/Moonshot/Qwen 等使用 vendor 特定参数激活推理
             Object.assign(providerOptions, buildThinkingParams(config.vendor, true));
         }
     }
 
-    // 自定义参数透传
     if (config.customParameters && typeof config.customParameters === 'object') {
         Object.assign(providerOptions, config.customParameters);
     }
@@ -164,6 +139,12 @@ function buildProviderOptions(
     if (Object.keys(providerOptions).length === 0) return undefined;
 
     return { openai: providerOptions };
+}
+
+function isGoogleModel(config: AIModelConfig): boolean {
+    return config.vendor === 'google' || 
+           config.vendor === 'gemini' || 
+           (typeof config.apiUrl === 'string' && config.apiUrl.includes('googleapis.com'));
 }
 
 /**
@@ -176,6 +157,8 @@ export async function callWithAISDK(
     config: AIModelConfig,
     options?: AIProviderOptions,
 ): Promise<{ text: string; reasoning?: string }> {
+    const isGoogle = isGoogleModel(config);
+
     const result = await generateText({
         model,
         system: systemPrompt,
@@ -184,8 +167,8 @@ export async function callWithAISDK(
         temperature: options?.temperature ?? config.defaultTemperature ?? 0.7,
         maxOutputTokens: options?.maxTokens ?? config.defaultMaxTokens ?? undefined,
         topP: config.defaultTopP ?? undefined,
-        presencePenalty: config.defaultPresencePenalty ?? undefined,
-        frequencyPenalty: config.defaultFrequencyPenalty ?? undefined,
+        presencePenalty: isGoogle ? undefined : (config.defaultPresencePenalty || undefined),
+        frequencyPenalty: isGoogle ? undefined : (config.defaultFrequencyPenalty || undefined),
         providerOptions: buildProviderOptions(config, options),
     });
 
@@ -196,12 +179,7 @@ export async function callWithAISDK(
 }
 
 /**
- * 流式调用 — 返回 AI SDK StreamTextResult
- *
- * 调用方可以使用:
- * - result.toDataStream() 获取 DataStream（用于 chat route 的 toDataStreamResponse）
- * - result.textStream 获取纯文本流
- * - result.fullStream 获取完整事件流
+ * 流式调用
  */
 export function streamWithAISDK(
     model: LanguageModel,
@@ -210,6 +188,8 @@ export function streamWithAISDK(
     config: AIModelConfig,
     options?: AIProviderOptions,
 ) {
+    const isGoogle = isGoogleModel(config);
+
     const result = streamText({
         model,
         system: systemPrompt,
@@ -218,8 +198,8 @@ export function streamWithAISDK(
         temperature: options?.temperature ?? config.defaultTemperature ?? 0.7,
         maxOutputTokens: options?.maxTokens ?? config.defaultMaxTokens ?? undefined,
         topP: config.defaultTopP ?? undefined,
-        presencePenalty: config.defaultPresencePenalty ?? undefined,
-        frequencyPenalty: config.defaultFrequencyPenalty ?? undefined,
+        presencePenalty: isGoogle ? undefined : (config.defaultPresencePenalty || undefined),
+        frequencyPenalty: isGoogle ? undefined : (config.defaultFrequencyPenalty || undefined),
         providerOptions: buildProviderOptions(config, options),
     });
 
@@ -228,12 +208,6 @@ export function streamWithAISDK(
 
 // ─── Internal Helpers ───
 
-/**
- * 自定义 fetch：绕过部分网关上游 Cloudflare WAF 的 bot 检测。
- *
- * Node.js 默认 fetch 的 TLS 指纹和请求头会被某些 CDN 拦截（返回 403），
- * 使用浏览器风格的 User-Agent 和 Accept 头即可通过。
- */
 const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 
 function normalizeGatewayHeaders(init?: RequestInit): Headers {
@@ -319,10 +293,38 @@ async function fetchWithGatewayHeaders(
     }
 }
 
+/**
+ * 清洗发往 Google 接口的请求体，彻底剔除其不支持的 penalty 字段
+ */
+function sanitizeRequestBody(body: BodyInit | null | undefined): BodyInit | null | undefined {
+    if (typeof body !== 'string') return body;
+    try {
+        const json = JSON.parse(body);
+        let modified = false;
+        if ('frequency_penalty' in json) {
+            delete json.frequency_penalty;
+            modified = true;
+        }
+        if ('presence_penalty' in json) {
+            delete json.presence_penalty;
+            modified = true;
+        }
+        return modified ? JSON.stringify(json) : body;
+    } catch {
+        return body;
+    }
+}
+
 function gatewayFetch(url: string | URL | Request, init?: RequestInit): Promise<Response> {
     let finalUrl: string | URL | Request = url;
+    let finalInit: RequestInit | undefined = init;
 
-    // 深度拦截并修复发往 Google OpenAI 兼容端点时被 SDK 错误追加的 /v1
+    const urlStr = typeof url === 'string' 
+        ? url 
+        : (url instanceof URL ? url.href : (url instanceof Request ? url.url : ''));
+    const isGoogle = urlStr.includes('googleapis.com');
+
+    // 1. 深度拦截并修复发往 Google OpenAI 兼容端点时被 SDK 错误追加的 /v1
     if (typeof finalUrl === 'string') {
         finalUrl = finalUrl.replace('/v1beta/openai/v1/', '/v1beta/openai/');
     } else if (finalUrl instanceof URL) {
@@ -334,15 +336,17 @@ function gatewayFetch(url: string | URL | Request, init?: RequestInit): Promise<
         }
     }
 
-    return fetchWithGatewayHeaders(finalUrl, init);
+    // 2. 针对 Google 接口，直接在 HTTP 请求体层面强行剔除 frequency_penalty 和 presence_penalty
+    if (isGoogle && finalInit?.body) {
+        finalInit = {
+            ...finalInit,
+            body: sanitizeRequestBody(finalInit.body),
+        };
+    }
+
+    return fetchWithGatewayHeaders(finalUrl, finalInit);
 }
 
-/**
- * 标准化 baseURL：
- * - AI SDK createOpenAI 内部会拼 /chat/completions
- * - 如果用户配置的 URL 包含完整路径，截掉
- * - 如果 URL 不含 /v1，补上（NewAPI 等网关需要 /v1 前缀）
- */
 function normalizeBaseUrl(apiUrl: string): string {
     return normalizeCustomProviderBaseUrl(apiUrl);
 }
