@@ -24,10 +24,16 @@ import { useToast } from '@/components/ui/Toast';
 
 interface ActivationKey {
     id: string;
-    key_code: string;
-    key_type: 'membership' | 'credits';
-    membership_type: 'plus' | 'pro' | null;
-    credits_amount: number | null;
+    key_code?: string;
+    code?: string;
+    key?: string | null;
+    key_type?: 'membership' | 'credits' | string;
+    type?: 'membership' | 'credits' | string;
+    membership_type?: 'plus' | 'pro' | string | null;
+    credits_amount?: number | null;
+    credits?: number | null;
+    amount?: number | null;
+    value?: number | null;
     is_used: boolean;
     used_by: string | null;
     used_at: string | null;
@@ -64,12 +70,20 @@ export function KeyManagementPanel() {
                 url += '?' + params.toString();
             }
 
-            const data = await requestBrowserData<{ success?: boolean; data?: ActivationKey[] }>(
+            const rawData = await requestBrowserData<any>(
                 url,
                 { method: 'GET' },
                 { fallbackMessage: '获取激活码失败' },
             );
-            setKeys(data.data || []);
+
+            // 兼容各种返回格式（无论是直接数组还是嵌套在 data 中）
+            const keysList = Array.isArray(rawData)
+                ? rawData
+                : Array.isArray(rawData?.data)
+                ? rawData.data
+                : [];
+
+            setKeys(keysList);
         } catch (error) {
             console.error('Failed to fetch keys:', error);
         } finally {
@@ -97,7 +111,7 @@ export function KeyManagementPanel() {
                 body.membershipType = createType;
             }
 
-            const data = await requestBrowserData<{ success?: boolean; error?: string }>(
+            const data = await requestBrowserData<any>(
                 '/api/activation-keys',
                 {
                     method: 'POST',
@@ -108,12 +122,13 @@ export function KeyManagementPanel() {
                 },
                 { fallbackMessage: '创建失败' },
             );
-            if (data.success) {
+
+            if (data?.success || Array.isArray(data?.keys) || Array.isArray(data)) {
                 setShowCreateForm(false);
                 setCreateCount(1);
                 fetchKeys();
             } else {
-                showToast('error', data.error || '创建失败');
+                showToast('error', data?.error || '创建失败');
             }
         } catch (error) {
             console.error('Failed to create keys:', error);
@@ -125,18 +140,18 @@ export function KeyManagementPanel() {
 
     const handleDelete = async (keyId: string) => {
         try {
-            const data = await requestBrowserData<{ success?: boolean; error?: string }>(
+            const data = await requestBrowserData<any>(
                 `/api/activation-keys?id=${keyId}`,
                 {
                     method: 'DELETE',
                 },
                 { fallbackMessage: '删除失败' },
             );
-            if (data.success) {
+            if (data?.success || data === true) {
                 setKeys(keys.filter(k => k.id !== keyId));
                 setDeleteKeyId(null);
             } else {
-                showToast('error', data.error || '删除失败');
+                showToast('error', data?.error || '删除失败');
             }
         } catch (error) {
             console.error('Failed to delete key:', error);
@@ -150,20 +165,29 @@ export function KeyManagementPanel() {
         setTimeout(() => setCopiedId(null), 2000);
     };
 
+    const getKeyCode = (key: ActivationKey) => {
+        return key.key_code || key.code || key.key || '';
+    };
+
     const getKeyTypeLabel = (key: ActivationKey) => {
-        if (key.key_type === 'credits') {
-            return `${key.credits_amount} 积分`;
+        const isCredits = key.key_type === 'credits' || key.type === 'credits';
+        if (isCredits) {
+            const amount = key.credits_amount ?? key.credits ?? key.amount ?? key.value ?? 0;
+            return `${amount} 积分`;
         }
-        return key.membership_type === 'plus' ? 'Plus 会员' : 'Pro 会员';
+        const memType = key.membership_type || 'plus';
+        return memType === 'pro' ? 'Pro 会员' : 'Plus 会员';
     };
 
     const getKeyTypeIcon = (key: ActivationKey) => {
-        if (key.key_type === 'credits') {
+        const isCredits = key.key_type === 'credits' || key.type === 'credits';
+        if (isCredits) {
             return <Coins className="w-4 h-4 text-blue-500" />;
         }
-        return key.membership_type === 'plus'
-            ? <Crown className="w-4 h-4 text-amber-500" />
-            : <Sparkles className="w-4 h-4 text-purple-500" />;
+        const memType = key.membership_type || 'plus';
+        return memType === 'pro'
+            ? <Sparkles className="w-4 h-4 text-purple-500" />
+            : <Crown className="w-4 h-4 text-amber-500" />;
     };
 
     if (loading) {
@@ -289,69 +313,72 @@ export function KeyManagementPanel() {
                 </div>
             ) : (
                 <div className="space-y-2">
-                    {keys.map((key) => (
-                        <div
-                            key={key.id}
-                            className={`flex items-center justify-between p-4 rounded-xl border ${key.is_used
-                                    ? 'bg-background-secondary/50 border-border/50 opacity-60'
-                                    : 'bg-background border-border'
-                                }`}
-                        >
-                            <div className="flex items-center gap-4">
-                                {/* 图标 */}
-                                <div className="p-2 rounded-lg bg-background-secondary">
-                                    {getKeyTypeIcon(key)}
+                    {keys.map((key) => {
+                        const code = getKeyCode(key);
+                        return (
+                            <div
+                                key={key.id}
+                                className={`flex items-center justify-between p-4 rounded-xl border ${key.is_used
+                                        ? 'bg-background-secondary/50 border-border/50 opacity-60'
+                                        : 'bg-background border-border'
+                                    }`}
+                            >
+                                <div className="flex items-center gap-4">
+                                    {/* 图标 */}
+                                    <div className="p-2 rounded-lg bg-background-secondary">
+                                        {getKeyTypeIcon(key)}
+                                    </div>
+
+                                    {/* Key信息 */}
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <code className="font-mono text-sm">{code}</code>
+                                            {key.is_used && (
+                                                <span className="px-2 py-0.5 rounded-full bg-red-500/10 text-red-500 text-xs">
+                                                    已使用
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-2 text-xs text-foreground-secondary mt-1">
+                                            <span>{getKeyTypeLabel(key)}</span>
+                                            <span>•</span>
+                                            <span>{new Date(key.created_at).toLocaleDateString()}</span>
+                                            {key.used_at && (
+                                                <>
+                                                    <span>•</span>
+                                                    <span>使用于 {new Date(key.used_at).toLocaleDateString()}</span>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
 
-                                {/* Key信息 */}
-                                <div>
-                                    <div className="flex items-center gap-2">
-                                        <code className="font-mono text-sm">{key.key_code}</code>
-                                        {key.is_used && (
-                                            <span className="px-2 py-0.5 rounded-full bg-red-500/10 text-red-500 text-xs">
-                                                已使用
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center gap-2 text-xs text-foreground-secondary mt-1">
-                                        <span>{getKeyTypeLabel(key)}</span>
-                                        <span>•</span>
-                                        <span>{new Date(key.created_at).toLocaleDateString()}</span>
-                                        {key.used_at && (
-                                            <>
-                                                <span>•</span>
-                                                <span>使用于 {new Date(key.used_at).toLocaleDateString()}</span>
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* 操作 */}
-                            <div className="flex items-center gap-2">
-                                {!key.is_used && (
+                                {/* 操作 */}
+                                <div className="flex items-center gap-2">
+                                    {!key.is_used && (
+                                        <button
+                                            onClick={() => handleCopy(code, key.id)}
+                                            className="p-2 rounded-lg hover:bg-background-secondary transition-colors"
+                                            title="复制"
+                                        >
+                                            {copiedId === key.id ? (
+                                                <Check className="w-4 h-4 text-green-500" />
+                                            ) : (
+                                                <Copy className="w-4 h-4 text-foreground-secondary" />
+                                            )}
+                                        </button>
+                                    )}
                                     <button
-                                        onClick={() => handleCopy(key.key_code, key.id)}
-                                        className="p-2 rounded-lg hover:bg-background-secondary transition-colors"
-                                        title="复制"
+                                        onClick={() => setDeleteKeyId(key.id)}
+                                        className="p-2 rounded-lg hover:bg-red-500/10 text-red-500 transition-colors"
+                                        title="删除"
                                     >
-                                        {copiedId === key.id ? (
-                                            <Check className="w-4 h-4 text-green-500" />
-                                        ) : (
-                                            <Copy className="w-4 h-4 text-foreground-secondary" />
-                                        )}
+                                        <Trash2 className="w-4 h-4" />
                                     </button>
-                                )}
-                                <button
-                                    onClick={() => setDeleteKeyId(key.id)}
-                                    className="p-2 rounded-lg hover:bg-red-500/10 text-red-500 transition-colors"
-                                    title="删除"
-                                >
-                                    <Trash2 className="w-4 h-4" />
-                                </button>
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
             <ConfirmDialog
