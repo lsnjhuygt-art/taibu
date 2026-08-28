@@ -54,9 +54,14 @@ export function createModelFromConfig(
     });
 
     // 推理模式下使用 reasoningModelId（如 deepseek-pro 的独立推理模型）
-    const modelId = (options?.reasoning && config.reasoningModelId)
+    let modelId = (options?.reasoning && config.reasoningModelId)
         ? config.reasoningModelId
         : config.modelId;
+
+    // 针对 Google Gemini 模型 ID 进行自动纠偏容错
+    if (modelId === 'gemini-3.1-pro') {
+        modelId = 'gemini-3.1-pro-preview';
+    }
 
     // For OpenAI-compatible gateways (NewAPI/Octopus), use chat-completions mode.
     return provider.chat(modelId);
@@ -315,13 +320,20 @@ async function fetchWithGatewayHeaders(
 }
 
 function gatewayFetch(url: string | URL | Request, init?: RequestInit): Promise<Response> {
-    // 自动纠偏 Google API 兼容路径中误拼的 /v1
-    let finalUrl = url;
+    let finalUrl: string | URL | Request = url;
+
+    // 深度拦截并修复发往 Google OpenAI 兼容端点时被 SDK 错误追加的 /v1
     if (typeof finalUrl === 'string') {
         finalUrl = finalUrl.replace('/v1beta/openai/v1/', '/v1beta/openai/');
     } else if (finalUrl instanceof URL) {
         finalUrl.pathname = finalUrl.pathname.replace('/v1beta/openai/v1/', '/v1beta/openai/');
+    } else if (typeof Request !== 'undefined' && finalUrl instanceof Request) {
+        if (finalUrl.url.includes('/v1beta/openai/v1/')) {
+            const newUrl = finalUrl.url.replace('/v1beta/openai/v1/', '/v1beta/openai/');
+            finalUrl = new Request(newUrl, finalUrl);
+        }
     }
+
     return fetchWithGatewayHeaders(finalUrl, init);
 }
 
