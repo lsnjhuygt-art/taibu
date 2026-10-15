@@ -7,15 +7,26 @@ const publicStorageOrigin = isSelfHosted()
   ? parseConfiguredOrigin(process.env.SUPABASE_PUBLIC_URL, 'SUPABASE_PUBLIC_URL')
   : new URL('https://gdaaipkdmwxkvgesknsp.supabase.co');
 
+const isVercel = Boolean(process.env.VERCEL);
+
 const nextConfig: NextConfig = {
-  output: 'standalone',
-  // Sharp loads platform binaries and libvips at runtime; pnpm keeps these
-  // optional packages outside the sharp package's directory.
-  outputFileTracingIncludes: {
-    '/api/agent/attachments': [
-      './node_modules/.pnpm/@img+sharp-*/node_modules/@img/sharp-*/**/*',
-    ],
-  },
+  // 1. 仅在非 Vercel 环境（如 Docker）下启用 standalone
+  ...(isVercel ? {} : { output: 'standalone' }),
+
+  // 2. 将本地 workspace 子包直接编译进 bundle，避免 workspace 软链接报错
+  transpilePackages: ['taibu-core'],
+
+  // 3. 仅在非 Vercel 环境下手动追踪 .pnpm 目录（Vercel 会自动追踪 sharp，手动指定 .pnpm 会因软链接导致部署失败）
+  ...(isVercel
+    ? {}
+    : {
+        outputFileTracingIncludes: {
+          '/api/agent/attachments': [
+            './node_modules/.pnpm/@img+sharp-*/node_modules/@img/sharp-*/**/*',
+          ],
+        },
+      }),
+
   images: {
     remotePatterns: [
       {
